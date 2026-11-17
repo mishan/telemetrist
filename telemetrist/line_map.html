@@ -189,7 +189,11 @@ const surfVals = SURF.rms_mm.filter(v=>v!=null).sort((a,b)=>a-b);
 const SURF_LO = surfVals.length ? surfVals[Math.floor(surfVals.length*0.1)] : 0;
 const SURF_HI = surfVals.length ? surfVals[Math.floor(surfVals.length*0.98)] : 1;
 const bumpColor = v => mix(css("--bump0"), css("--bump1"), (v-SURF_LO)/((SURF_HI-SURF_LO)||1));
-const turnAt = p => { const t=TURNS.find(t=>t.entry_pos!=null && p>=t.entry_pos-0.005 && p<=t.exit_pos+0.005); return t ? t.turn : null; };
+// What the driver reads a turn as: the circuit's number where the track settles it,
+// else the section's name; the session's number only where the track numbers nothing.
+const turnLabel = t => t.label===undefined ? t.turn : (t.label || t.name || "");
+const labelOf = turn => { const t=TURNS.find(t=>t.turn===turn); return t ? turnLabel(t) : turn; };
+const turnAt = p => { const t=TURNS.find(t=>t.entry_pos!=null && p>=t.entry_pos-0.005 && p<=t.exit_pos+0.005); return t ? turnLabel(t) : null; };
 // The five roughest stretches, at least a hundredth of a lap apart.
 const ROUGHEST = (() => {
   const order = SURF.rms_mm.map((v,i)=>[v,i]).filter(x=>x[0]!=null).sort((a,b)=>b[0]-a[0]), out=[];
@@ -274,8 +278,14 @@ function lapColor(l){
   return mix(css("--ramp0"), css("--ramp1"), i/n);
 }
 
-// The pit wall opens the map on one turn with #turn=T4.
-const ZOOM = TURNS.find(t=>t.turn===new URLSearchParams(location.hash.slice(1)).get("turn") && t.entry_pos<t.exit_pos);
+// The pit wall opens the map on one turn with #turn=T4, the session's number
+// as the tools give it; where the circuit numbers the same "T4" another turn,
+// the session's turn wins.
+function zoomTurn(ask){
+  const drawn = t=>t.entry_pos<t.exit_pos;
+  return TURNS.find(t=>t.turn===ask && drawn(t)) || TURNS.find(t=>t.label===ask && drawn(t));
+}
+const ZOOM = zoomTurn(new URLSearchParams(location.hash.slice(1)).get("turn"));
 let xs=[],zs=[]; laps.forEach(l=>l.p.forEach((p,i)=>{ if (!ZOOM || (p>=ZOOM.entry_pos-0.02 && p<=ZOOM.exit_pos+0.02)){ xs.push(l.x[i]); zs.push(l.z[i]); } }));
 const bx=[Math.min(...xs),Math.max(...xs)], bz=[Math.min(...zs),Math.max(...zs)];
 const cv=document.getElementById("c"), ctx=cv.getContext("2d"), tip=document.getElementById("tip");
@@ -383,7 +393,7 @@ function turnMarks(label){
     ctx.strokeStyle=css("--brake"); ctx.lineWidth=2; ctx.lineCap="round";
     ctx.beginPath(); ctx.moveTo(x-nx*7,y-ny*7); ctx.lineTo(x+nx*7,y+ny*7); ctx.stroke();
   });
-  TURNS.forEach(t=>label(ref, t.apex_pos, t.turn));
+  TURNS.forEach(t=>{ if (turnLabel(t)) label(ref, t.apex_pos, turnLabel(t)); });
 }
 // A shift on the map: a filled dot going up, a hollow one coming down.
 function shiftDot(x, y, up){
@@ -709,7 +719,7 @@ function turnTable(sel, rv){
     const bm=firstAt(sel.p, sel.b, lo, t.apex_pos, .2), bt=rv.inputs.brake ? firstAt(gridPos, rv.b, lo, t.apex_pos, .2) : null;
     const tm=firstAt(sel.p, sel.t, t.apex_pos, hi, .5), tt=rv.inputs.gas ? firstAt(gridPos, rv.t, t.apex_pos, hi, .5) : null;
     const vm=minIn(sel.p, sel.v, entry, exit), vt=minIn(gridPos, rv.v, entry, exit);
-    return "<tr><td>"+t.turn+"</td><td>"+dm(bm,bt)+"</td><td>"+(vm==null?"-":Math.round(vm))+" / "+(vt==null?"-":Math.round(vt))+"</td><td>"+dm(tm,tt)+"</td></tr>";
+    return "<tr><td>"+(turnLabel(t)||"-")+"</td><td>"+dm(bm,bt)+"</td><td>"+(vm==null?"-":Math.round(vm))+" / "+(vt==null?"-":Math.round(vt))+"</td><td>"+dm(tm,tt)+"</td></tr>";
   }).join("");
   return "<table class=\"mini\"><tr><th>turn</th><th>brakes</th><th>min km/h</th><th>throttle</th></tr>"+body+"</table>"+
     "<span>brakes and throttle: how much later the opponent did it than you, negative if earlier. min: you / them</span>";
@@ -732,10 +742,11 @@ function drawStrip(){
   sctx.fillStyle=css("--muted"); sctx.textAlign="center"; sctx.font="600 10px "+css("--font-display");
   const lastX=[-Infinity,-Infinity];
   TURNS.forEach(t=>{
-    const x=sx(t.apex_pos), w=sctx.measureText(t.turn).width+4;
+    const txt=turnLabel(t); if (!txt) return;
+    const x=sx(t.apex_pos), w=sctx.measureText(txt).width+4;
     const row = x-lastX[0] >= w ? 0 : x-lastX[1] >= w ? 1 : -1;
     if (row<0) return;
-    sctx.fillText(t.turn, x, row ? top-14 : top-5);
+    sctx.fillText(txt, x, row ? top-14 : top-5);
     lastX[row]=x;
   });
   sctx.textAlign="start";
@@ -811,7 +822,7 @@ sv.addEventListener("mousemove", e=>{
     rows.push(esc(rivalName(cr.r))+": <b>"+num(rv.v[k],0)+"</b> km/h · brake "+pct(rv.b[k])+" · throttle "+pct(rv.t[k])+" · gear "+(rv.g[k]||"-"));
     if (g && g[k]!=null) rows.push("gap <b>"+signed(g[k]/1000,2)+" s</b>"+(g[k]>0?" behind":" ahead"));
   }
-  rows.push(c ? "corner: "+(c.turn||"no turn matched")+" · peak "+c.peak_g+" g · min "+c.min_kmh+" km/h" : "not in a corner");
+  rows.push(c ? "corner: "+(c.turn ? labelOf(c.turn)||"-" : "no turn matched")+" · peak "+c.peak_g+" g · min "+c.min_kmh+" km/h" : "not in a corner");
   stip.innerHTML=rows.join("<br>");
   placeTip(stip, mx, my, SW, SH);
 });

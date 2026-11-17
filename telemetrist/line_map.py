@@ -30,7 +30,7 @@ import math
 from pathlib import Path
 from statistics import median
 
-from . import analysis, db, turns
+from . import analysis, circuit, db, sims, turns
 from .sims import calibration
 
 TEMPLATE = Path(__file__).with_name("line_map.html")
@@ -469,6 +469,34 @@ def rivals(conn, session_id: int, track_length_m: float | None) -> list[dict]:
     return out[:RIVAL_MAX_CARS]
 
 
+def _label_turns(marks: list[dict], session: dict | None) -> None:
+    """Give each turn mark the `label` the page draws, and its `name`.
+
+    The circuit's own number where the track's sections.ini settles it
+    (circuit.circuit_numbers): a driver reads "T2" as the circuit's Turn 2,
+    not as the second corner this session's detector found. Once the
+    circuit's numbering is in use, a turn it does not number gets no label
+    rather than its session number, which could be another corner's
+    circuit number. Without a sections.ini every turn keeps its session
+    number, as before.
+    """
+    sections = []
+    if session and not sims.unsupported(session.get("sim") or "ac",
+                                        "track_sections"):
+        sections = circuit.sections_for(session.get("track"),
+                                        session.get("track_config"))[0]
+    named = circuit.name_turns(marks, sections)
+    numbered = any(t.get("circuit_turn") for t in named)
+    for mark, t in zip(marks, named):
+        if t.get("name"):
+            mark["name"] = t["name"]
+        if numbered:
+            ct = t.get("circuit_turn")
+            mark["label"] = "T" + ct.split()[-1] if ct else None
+        else:
+            mark["label"] = mark.get("turn")
+
+
 def build(conn, session_id: int | None = None,
           lap_ids: list[int] | None = None, *,
           every_ms: int = EVERY_MS) -> dict:
@@ -646,6 +674,7 @@ def build(conn, session_id: int | None = None,
 
     if cmap:
         turn_marks = [{k: t.get(k) for k in TURN_KEYS} for t in cmap["turns"]]
+        _label_turns(turn_marks, db.get_session(conn, asked[0]))
         unnumbered = [{k: u.get(k) for k in CLUSTER_KEYS}
                       for u in cmap["unnumbered"]]
         detection = (analysis.corner_detection_note(

@@ -219,9 +219,11 @@ def _place_dict(d: dict, length_m: float, turns: list[dict],
     if d.get("turn"):
         # The circuit's name beside the session's number, so a corner in any
         # payload can be quoted the way the driver knows it.
-        name = names.get(d["turn"])
+        name, number = names.get(d["turn"], (None, None))
         if name and "name" not in d:
             out["name"] = name
+        if number and "circuit_turn" not in d:
+            out["circuit_turn"] = number
         brake, entry = d.get("brake_point_pos"), d.get("entry_pos")
         if _is_fraction(brake) and _is_fraction(entry):
             out["brake_before_turn_in_m"] = round(
@@ -248,14 +250,15 @@ def place(payload, length_m: float | None, turns: list[dict] | None):
     `turns` is the numbering the payload's own labels came from, so a
     `where` never names a turn the rest of the payload calls something else.
     Turns carrying a circuit `name` (circuit.name_turns) are called by it,
-    and every dict labeled with one of their numbers gets the name beside
-    the number.
+    and every dict labeled with one of their numbers gets the name, and the
+    circuit's own number (`circuit_turn`, "Turn 2") where the track's
+    sections settle it, beside the session's number.
     """
     if not length_m:
         return payload
     turns = turns or []
-    names = {t["turn"]: t["name"] for t in turns
-             if t.get("turn") and t.get("name")}
+    names = {t["turn"]: (t.get("name"), t.get("circuit_turn")) for t in turns
+             if t.get("turn") and (t.get("name") or t.get("circuit_turn"))}
 
     def walk(node):
         if isinstance(node, dict):
