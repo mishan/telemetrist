@@ -7,7 +7,7 @@ and the setup files may still change between minor versions.
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-11-05
+## [0.3.0] - 2026-11-17
 
 assetto-mcp is now Telemetrist, and it reads Automobilista 2 as well as
 Assetto Corsa. An install that updates itself keeps working under the old
@@ -27,6 +27,9 @@ update: until then it serves no pit wall, overlay or line map.
 - After an update, the servers in Claude Desktop's other chats restart onto
   the new code by themselves once the game is off track. Another chat's
   session holds an update back only while the game is on track.
+- Turns carry the circuit's own number where the track's sections.ini
+  settles it: the line map labels them as the circuit does, and tools give
+  `circuit_turn` ("Turn 2") beside the session's T-number and the name.
 - `session_check` and `apply_update` say when a Claude Desktop config
   still has a pre-rename entry, and that re-running the installer renames it.
 
@@ -40,7 +43,9 @@ update: until then it serves no pit wall, overlay or line map.
   first start that finds nothing holding it open. See [upgrading](docs/INSTALL.md#upgrading-from-assetto-mcp-or-ac-race-engineer).
 - The Windows installer keeps the settings on an existing Claude Desktop
   entry (`env` and anything besides the command), from whichever config
-  holds it, instead of writing a bare entry over them.
+  holds it, instead of writing a bare entry over them. It says what each
+  config held before it writes, and backs up an existing one even when it
+  is empty.
 - A lap left mid-way for the pits (AC's Return to Pits) or the garage
   (AMS2) is kept, marked unfinished, as a crash already was, and so is the
   lap so far when the driver quits to the menus or restarts. They used to
