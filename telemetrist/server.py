@@ -2180,9 +2180,10 @@ def track_corners(session_id: int | None = None,
     `direction` (left/right; `turn_sign` +1/-1), and laps cornered there.
     Not the circuit's numbering (flat kinks are skipped, a "3A" is numbered
     through) and not shared between sessions. With a track sections.ini
-    each turn carries the circuit's `name`, to quote over the T-number, and
-    `circuit_names` lists the named sections. `unnumbered`: road only one
-    lap cornered on.
+    each turn carries the circuit's `name`, to quote over the T-number,
+    and `circuit_turn` ("Turn 2"), the circuit's own number where its
+    sections settle it; `circuit_names` lists the named sections.
+    `unnumbered`: road only one lap cornered on.
 
     meters: distances past the start line, as a list or as text separated
     by spaces or ", "; no thousands separators ("3,335" is refused).
@@ -2223,11 +2224,14 @@ def track_corners(session_id: int | None = None,
         out["circuit_names"] = {
             "source": source,
             "sections": [
-                {**s, "turns": [t["turn"] for t, j in zip(named, owner)
-                                if j == k]}
-                for k, s in enumerate(sections)],
+                {**s, **({"circuit_turn": f"Turn {n}"} if n else {}),
+                 "turns": [t["turn"] for t, j in zip(named, owner)
+                           if j == k]}
+                for k, (s, n) in enumerate(
+                    zip(sections, circuit.circuit_numbers(sections)))],
             "note": "names from the track's own sections.ini; each turn "
-                    "carries `name` beside its session number. A section "
+                    "carries `name`, and `circuit_turn` where the circuit's "
+                    "numbering is settled, beside its session number. A section "
                     "with no turns is one the detector never saw, usually "
                     "a kink taken flat.",
         }

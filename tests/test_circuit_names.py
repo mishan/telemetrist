@@ -208,6 +208,85 @@ def test_two_sections_with_one_name_number_their_turns_together():
     assert all("name" not in t for t in turns), "the input is not changed"
 
 
+# Laguna Seca's own file: three corners called by their names, a "Turn 1"
+# across the line that is a flat kink, and Rahal Straight standing for the
+# kink the circuit calls Turn 7.
+LAGUNA = [
+    {"name": "Andretti Hairpin", "in_pos": 0.111, "out_pos": 0.163},
+    {"name": "Turn 3", "in_pos": 0.196, "out_pos": 0.24},
+    {"name": "Turn 4", "in_pos": 0.271, "out_pos": 0.318},
+    {"name": "Turn 5", "in_pos": 0.401, "out_pos": 0.469},
+    {"name": "Turn 6", "in_pos": 0.522, "out_pos": 0.568},
+    {"name": "Rahal Straight", "in_pos": 0.568, "out_pos": 0.665},
+    {"name": "The Corkscrew", "in_pos": 0.665, "out_pos": 0.717},
+    {"name": "Rainey Curve", "in_pos": 0.737, "out_pos": 0.788},
+    {"name": "Turn 10", "in_pos": 0.813, "out_pos": 0.856},
+    {"name": "Turn 11", "in_pos": 0.898, "out_pos": 0.932},
+    {"name": "Turn 1", "in_pos": 0.988, "out_pos": 0.048},
+]
+
+
+def test_the_circuits_numbers_fill_in_between_its_numbered_sections():
+    """Between Turn 6 and Turn 10 lie exactly three sections, so they are 7,
+    8 and 9; the one between Turn 1 and Turn 3 is 2. The order runs from
+    the line, so the Turn 1 that crosses it comes first."""
+    nums = dict(zip((s["name"] for s in LAGUNA),
+                    circuit.circuit_numbers(LAGUNA)))
+    assert nums == {
+        "Turn 1": "1", "Andretti Hairpin": "2", "Turn 3": "3", "Turn 4": "4",
+        "Turn 5": "5", "Turn 6": "6", "Rahal Straight": "7",
+        "The Corkscrew": "8", "Rainey Curve": "9", "Turn 10": "10",
+        "Turn 11": "11"}, nums
+    print(f"  {nums}")
+
+
+def test_a_gap_the_sections_do_not_fit_is_left_unnumbered():
+    """Two sections where one number is missing: which one is Turn 4 is a
+    guess, so neither gets a number."""
+    secs = [{"name": "Turn 3", "in_pos": 0.1, "out_pos": 0.15},
+            {"name": "The Bend", "in_pos": 0.2, "out_pos": 0.25},
+            {"name": "Back Straight", "in_pos": 0.3, "out_pos": 0.4},
+            {"name": "Turn 5", "in_pos": 0.5, "out_pos": 0.55},
+            {"name": "Last Corner", "in_pos": 0.8, "out_pos": 0.85}]
+    assert circuit.circuit_numbers(secs) == [
+        "3", None, None, "5", None], circuit.circuit_numbers(secs)
+
+
+def test_lettered_turns_keep_their_letters_and_bound_a_gap():
+    secs = [{"name": "Turn 10A", "in_pos": 0.845, "out_pos": 0.863},
+            {"name": "Turn 10B", "in_pos": 0.869, "out_pos": 0.890},
+            {"name": "Esses", "in_pos": 0.9, "out_pos": 0.92},
+            {"name": "T12", "in_pos": 0.95, "out_pos": 0.97}]
+    assert circuit.circuit_numbers(secs) == ["10A", "10B", "11", "12"], \
+        circuit.circuit_numbers(secs)
+
+
+def test_a_turn_carries_the_circuits_number_beside_its_session_one():
+    turns = [{"turn": "T1", "entry_pos": 0.12, "apex_pos": 0.134},
+             {"turn": "T2", "apex_pos": 0.183},
+             {"turn": "T6", "entry_pos": 0.526, "apex_pos": 0.546},
+             {"turn": "T8", "entry_pos": 0.678, "apex_pos": 0.684},
+             {"turn": "T9", "entry_pos": 0.694, "apex_pos": 0.695},
+             {"turn": "T12", "entry_pos": 0.905, "apex_pos": 0.910}]
+    got = {t["turn"]: t.get("circuit_turn")
+           for t in circuit.name_turns(turns, LAGUNA)}
+    assert got == {"T1": "Turn 2", "T2": None, "T6": "Turn 6",
+                   "T8": "Turn 8", "T9": "Turn 8", "T12": "Turn 11"}, got
+    print(f"  {got}")
+
+
+def test_every_payload_carries_the_circuits_number_beside_the_name():
+    """lap_summary, compare_laps and the rest label corners by the session's
+    T-number; the circuit's own number rides beside it."""
+    named = circuit.name_turns(
+        [{"turn": "T1", "entry_pos": 0.12, "apex_pos": 0.134}], LAGUNA)
+    out = places.place({"corners": [{"turn": "T1", "apex_pos": 0.134}]},
+                       3559.0, named)
+    c = out["corners"][0]
+    assert (c["turn"], c.get("name"), c.get("circuit_turn")) == (
+        "T1", "Andretti Hairpin", "Turn 2"), c
+
+
 def test_a_layout_without_its_own_file_does_not_borrow_the_roots():
     """The root data/ is another layout's spline; its names would be wrong."""
     with _AcRoot() as root:

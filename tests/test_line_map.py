@@ -238,6 +238,91 @@ def test_turn_numbers_are_the_sessions_own():
           + ", ".join(f"{t['turn']}@{t['apex_pos']}" for t in data["turns"]))
 
 
+_SECTIONS = """\
+[SECTION_0]
+IN=0.97
+OUT=0.03
+TEXT=Turn 1
+[SECTION_1]
+IN=0.15
+OUT=0.25
+TEXT=The Hairpin
+[SECTION_2]
+IN=0.44
+OUT=0.56
+TEXT=Turn 3
+[SECTION_3]
+IN=0.75
+OUT=0.85
+TEXT=Turn 4
+"""
+
+
+def test_the_map_labels_turns_with_the_circuits_numbers():
+    """A driver reads the map in the circuit's numbering. The session found
+    the hairpin first and calls it T1; the circuit's Turn 1 is a kink
+    before it that the detector never sees."""
+    root = Path(lasting_dir("ac-root-"))
+    data_dir = root / "content" / "tracks" / "mugello" / "data"
+    data_dir.mkdir(parents=True)
+    (data_dir / "sections.ini").write_text(_SECTIONS, encoding="utf-8")
+    old = os.environ.get("TELEMETRIST_AC_ROOT")
+    os.environ["TELEMETRIST_AC_ROOT"] = str(root)
+    try:
+        with temp_db() as path:
+            conn = db.connect(path)
+            try:
+                sid = make_session(conn)
+                for n in range(1, 4):
+                    _store(conn, sid, n, 90000 + n)
+                data = line_map.build(conn, sid)
+            finally:
+                conn.close()
+    finally:
+        if old is None:
+            os.environ.pop("TELEMETRIST_AC_ROOT", None)
+        else:
+            os.environ["TELEMETRIST_AC_ROOT"] = old
+    assert [t["turn"] for t in data["turns"]] == ["T1", "T2", "T3"]
+    assert [t.get("label") for t in data["turns"]] == ["T2", "T3", "T4"], \
+        data["turns"]
+    assert [t.get("name") for t in data["turns"]] == [
+        "The Hairpin", "Turn 3", "Turn 4"], data["turns"]
+    print("  " + ", ".join(f"{t['turn']} -> {t['label']}" for t in data["turns"]))
+
+
+def test_without_the_circuits_numbers_the_map_keeps_the_sessions():
+    with temp_db() as path:
+        conn = db.connect(path)
+        try:
+            sid = make_session(conn, track="no_such_track_anywhere")
+            for n in range(1, 4):
+                _store(conn, sid, n, 90000 + n)
+            data = line_map.build(conn, sid)
+        finally:
+            conn.close()
+    assert [t.get("label") for t in data["turns"]] == ["T1", "T2", "T3"], \
+        data["turns"]
+
+
+def test_the_pit_wall_zooms_to_the_turn_by_its_session_number():
+    """The pit wall asks for the session's T-number. Where the circuit's
+    number for one turn is another turn's session number, the session's
+    turn is the one meant."""
+    node = _node("the page's zoomTurn()")
+    if node is None:
+        return
+    turns = [{"turn": "T1", "label": "T2", "entry_pos": 0.1, "exit_pos": 0.2},
+             {"turn": "T2", "label": "T3", "entry_pos": 0.3, "exit_pos": 0.4}]
+    script = (f"const TURNS={json.dumps(turns)};\n" + _js_function("zoomTurn")
+              + '\nconsole.log(JSON.stringify(["T2", "T3", "T9"].map('
+              '(a) => (zoomTurn(a) || {}).turn ?? null)));')
+    run = subprocess.run([node, "-e", script], capture_output=True,
+                         text=True, timeout=60)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == ["T2", "T2", None], run.stdout
+
+
 def test_each_lap_shows_what_the_detector_saw_on_it():
     """The corners, the trace and the bar are the ones lap_summary uses."""
     with temp_db() as path:
@@ -580,6 +665,27 @@ def _js_function(name: str) -> str:
         i += 1
 
 
+def _node(checked: str) -> str | None:
+    """The node binary, or None after a skip where there is none.
+
+    The same convention as the Lua app's optional interpreter: absent on
+    the gaming PC, where skipping is right, and a failure in CI, where a
+    skip would be a green build over an untested page. GitHub's ubuntu and
+    windows runners both ship node.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import lua_harness
+    node = shutil.which("node") or shutil.which("nodejs")
+    if node is None:
+        if lua_harness.strict():
+            raise RuntimeError(
+                f"node is not installed, so {checked} would go unchecked. "
+                f"{lua_harness.STRICT_ENV} is set, which means this is CI, "
+                "where that skip is a failure.")
+        lua_harness.skip("node is not installed")
+    return node
+
+
 def test_the_pages_integrate_matches_the_one_that_fills_its_other_side():
     """The gap trace subtracts a JS estimate from a Python one.
 
@@ -591,21 +697,8 @@ def test_the_pages_integrate_matches_the_one_that_fills_its_other_side():
     change to either one would tilt every gap on the page rather than fail
     anything.
     """
-    # The same convention as the Lua app's optional interpreter: absent on
-    # the gaming PC, where skipping is right, and a failure in CI, where a
-    # skip would be a green build over an untested page. GitHub's ubuntu and
-    # windows runners both ship node.
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import lua_harness
-    node = shutil.which("node") or shutil.which("nodejs")
+    node = _node("the page's integrate() against integrate_time()")
     if node is None:
-        if lua_harness.strict():
-            raise RuntimeError(
-                "node is not installed, so the page's integrate() would go "
-                f"unchecked against integrate_time(). {lua_harness.STRICT_ENV} "
-                "is set, which means this is CI, where that skip is a "
-                "failure.")
-        lua_harness.skip("node is not installed")
         return
 
     track = 3000.0

@@ -291,6 +291,54 @@ def _section_for(t: dict, sections: list[dict]) -> int | None:
     return best if _distance(apex, sections[best]) <= NAME_SLACK else None
 
 
+# A section named for its number: "Turn 10A", "T12", "turn 3".
+_NUMBERED = re.compile(r"^\s*(?:turn|t)\s*(\d{1,3})([a-z]?)\s*$", re.I)
+
+
+def _lap_order(sections: list[dict]) -> list[int]:
+    """Section indices in lap order from the line. A section the line runs
+    through (OUT below IN) starts before the line, so it comes first."""
+    def start(j):
+        s = sections[j]
+        return s["in_pos"] - 1.0 if s["out_pos"] < s["in_pos"] else s["in_pos"]
+    return sorted(range(len(sections)), key=start)
+
+
+def circuit_numbers(sections: list[dict]) -> list[str | None]:
+    """The circuit's turn number for each section, "10A" or "7", or None.
+
+    A section named "Turn N" carries its own. A section with a name instead
+    -- the Andretti Hairpin, the Corkscrew -- takes the number its place
+    implies, but only where that is certain: the sections between two
+    numbered ones fill exactly the numbers missing between them, or the ones
+    before the first numbered section fill exactly the numbers below it.
+    Anything else stays None rather than a guess, and after the last
+    numbered section nothing says how many turns the circuit has.
+    """
+    out: list[str | None] = [None] * len(sections)
+    order = _lap_order(sections)
+    anchors = []                        # (place in `order`, number)
+    for k, j in enumerate(order):
+        m = _NUMBERED.match(sections[j]["name"])
+        if m:
+            out[j] = f"{int(m.group(1))}{m.group(2).upper()}"
+            anchors.append((k, int(m.group(1))))
+
+    def fill(places, first):
+        for n, k in enumerate(places):
+            out[order[k]] = str(first + n)
+
+    if anchors and anchors[0][0] == anchors[0][1] - 1:
+        fill(range(anchors[0][0]), 1)
+    # Lettered turns share a number (10A, 10B), so the count between two
+    # anchors is by their whole numbers: nothing fits between 10A and 10B.
+    for (ka, na), (kb, nb) in zip(anchors, anchors[1:]):
+        between = range(ka + 1, kb)
+        if between and len(between) == nb - na - 1:
+            fill(between, na + 1)
+    return out
+
+
 def claim(turns: list[dict],
           sections: list[dict]) -> tuple[list[dict], list[int | None]]:
     """The turns named (as name_turns), and which section claimed each.
@@ -311,6 +359,10 @@ def claim(turns: list[dict],
     for i, j in enumerate(owner):
         if j is not None:
             by_name.setdefault(sections[j]["name"], []).append(i)
+    numbers = circuit_numbers(sections)
+    for i, j in enumerate(owner):
+        if j is not None and numbers[j]:
+            out[i]["circuit_turn"] = f"Turn {numbers[j]}"
     for name, idxs in by_name.items():
         idxs.sort(key=lambda i: (
             sections[owner[i]]["in_pos"], owner[i],
@@ -324,7 +376,9 @@ def claim(turns: list[dict],
 
 
 def name_turns(turns: list[dict], sections: list[dict]) -> list[dict]:
-    """The turns, each copied with `name` from the section it lies in.
+    """The turns, each copied with `name` from the section it lies in, and
+    `circuit_turn` ("Turn 2") where circuit_numbers settles that section's
+    number.
 
     A turn no section claims keeps no name. Where the detector found more
     than one turn inside one named section -- the Esses, a double-apex
