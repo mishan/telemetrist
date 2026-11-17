@@ -23,7 +23,7 @@ _HARNESS = r"""
 $ErrorActionPreference = 'Stop'
 function Write-Step($m) {}; function Write-Info($m) { "INFO: $m" }
 function Write-Ok($m) { "OK: $m" }; function Write-Warn2($m) { "WARN: $m" }
-function Write-JsonFile($p, $t) { [IO.File]::WriteAllText($p, $t) }
+function Write-JsonFile($p, $t) { [IO.File]::WriteAllText($p, $t); Write-Host "WROTE: $p" }
 $ServerName = 'telemetrist'
 $LegacyServerNames = @('assetto-mcp', 'ac-race-engineer')
 . '__SCRIPT__'
@@ -146,8 +146,11 @@ def test_what_each_config_held_is_said_before_anything_is_written():
     if out is None:
         return
     _, _, text = out
-    found = [l for l in text.splitlines() if "Found in" in l]
+    lines = text.splitlines()
+    found = [l for l in lines if "Found in" in l]
     assert len(found) == 2, text
+    wrote = next(i for i, l in enumerate(lines) if l.startswith("WROTE: "))
+    assert all(lines.index(l) < wrote for l in found), text
     owner_line = next(l for l in found if "msix.json" in l)
     assert "telemetrist" in owner_line and "other" in owner_line, owner_line
     assert "no MCP servers" in next(l for l in found if "plain.json" in l)
