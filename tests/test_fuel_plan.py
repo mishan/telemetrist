@@ -315,7 +315,23 @@ def test_set_fuel_basis_checks_its_own_arguments():
 # a subprocess against a throwaway data directory and an ephemeral port
 # rather than in the suite's own interpreter. The tank lookup and the
 # argument checks live in the tool layer.
-_SERVER_PROBE = """
+#
+# The probe decides what the game says, too. The tool reads the fuel-usage
+# multiplier from AC's shared memory when it can, and on a Windows PC where
+# a telemetrist server is running that memory stays mapped after the game
+# closes -- so the real machine's last session would answer, and the result
+# would depend on whose PC ran the suite.
+_NO_GAME = """
+from telemetrist import server
+from telemetrist.sim_info import SharedMemoryUnavailable
+
+def _no_game():
+    raise SharedMemoryUnavailable("the test says AC is not running")
+
+server._open_sim = _no_game
+"""
+
+_SERVER_PROBE = _NO_GAME + """
 import json
 from telemetrist import db, server
 
@@ -368,8 +384,8 @@ def test_the_tool_layer_survives_a_read_only_fuel_entry():
     assert "read-only" in plan["tank_liters_source"], plan
     assert plan["stop_required_for_fuel"] is True
     assert plan["stops_planned"] == 3, plan
-    # The multiplier cannot be read off Windows, and that is reported
-    # rather than assumed away.
+    # With the game shut the multiplier cannot be read, and that is
+    # reported rather than assumed away.
     assert plan["fuel_rate_pct"] is None
     assert "fuel_rate_unknown" in plan
 
@@ -391,8 +407,8 @@ from telemetrist import db, server
 
 conn = server._conn
 facts = {}
-# Stands in for shared memory: empty is AC shut, which is every machine this
-# suite runs on anyway.
+# Stands in for shared memory: empty is AC shut. Never the real page, which
+# on a Windows PC running a telemetrist server holds the last session's values.
 server._live_fuel_facts = lambda: (
     dict(facts), None if facts else "AC is not running")
 
