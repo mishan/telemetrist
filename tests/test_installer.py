@@ -21,9 +21,9 @@ SCRIPT = ROOT / "windows" / "install-claude-desktop.ps1"
 
 _HARNESS = r"""
 $ErrorActionPreference = 'Stop'
-function Write-Step($m) {}; function Write-Info($m) {}
+function Write-Step($m) {}; function Write-Info($m) { "INFO: $m" }
 function Write-Ok($m) { "OK: $m" }; function Write-Warn2($m) { "WARN: $m" }
-function Write-JsonFile($p, $t) { [IO.File]::WriteAllText($p, $t) }
+function Write-JsonFile($p, $t) { [IO.File]::WriteAllText($p, $t); Write-Host "WROTE: $p" }
 $ServerName = 'telemetrist'
 $LegacyServerNames = @('assetto-mcp', 'ac-race-engineer')
 . '__SCRIPT__'
@@ -33,7 +33,7 @@ function Get-ClaudeConfigCandidates {
        [pscustomobject]@{Path=$other; Dir=(Split-Path $other); IsPackage=$false})
 }
 function Select-OwnerConfig($c) { [pscustomobject]@{Owner=$c[0]; Reason='test'} }
-function Backup-ConfigFile($p) { "$p.bak" }
+function Backup-ConfigFile($p) { Copy-Item -LiteralPath $p -Destination "$p.bak"; "$p.bak" }
 Register-WithClaudeDesktop -PythonPath 'C:\py.exe'
 """
 
@@ -42,7 +42,7 @@ def _powershell() -> str | None:
     return shutil.which("powershell") or shutil.which("pwsh")
 
 
-def _install(owner_cfg: dict | None, other_cfg: dict | None) -> tuple | None:
+def _install(owner_cfg, other_cfg, raw: dict | None = None) -> tuple | None:
     """Run the step; return (owner config, other config, output), or None
     where there is no PowerShell to run it."""
     shell = _powershell()
@@ -55,8 +55,11 @@ def _install(owner_cfg: dict | None, other_cfg: dict | None) -> tuple | None:
         return None
     with tempfile.TemporaryDirectory() as d:
         owner, other = Path(d) / "msix.json", Path(d) / "plain.json"
-        for path, cfg in ((owner, owner_cfg), (other, other_cfg)):
-            if cfg is not None:
+        for name, path, cfg in (("owner", owner, owner_cfg),
+                                ("other", other, other_cfg)):
+            if raw and name in raw:
+                path.write_text(raw[name], encoding="utf-8")
+            elif cfg is not None:
                 path.write_text(json.dumps(cfg, ensure_ascii=False),
                                 encoding="utf-8")
         script = (_HARNESS.replace("__SCRIPT__", str(SCRIPT))
@@ -131,6 +134,59 @@ def test_settings_outside_ascii_come_through_whole():
             return
         assert got[0]["mcpServers"]["telemetrist"]["env"] == env, got[0]
     print("  non-ASCII settings survive, from either config")
+
+
+def test_what_each_config_held_is_said_before_anything_is_written():
+    """A setting that disappeared before the installer ran left no trace
+    of where it had been; the output must say what each config held."""
+    out = _install({"mcpServers": {"telemetrist": {"command": "py",
+                                                   "args": []},
+                                   "other": {}}},
+                   {"mcpServers": {}})
+    if out is None:
+        return
+    _, _, text = out
+    lines = text.splitlines()
+    found = [l for l in lines if "Found in" in l]
+    assert len(found) == 2, text
+    wrote = next(i for i, l in enumerate(lines) if l.startswith("WROTE: "))
+    assert all(lines.index(l) < wrote for l in found), text
+    owner_line = next(l for l in found if "msix.json" in l)
+    assert "telemetrist" in owner_line and "other" in owner_line, owner_line
+    assert "no MCP servers" in next(l for l in found if "plain.json" in l)
+    print("  each config's contents are reported before the write")
+
+
+def test_a_missing_config_is_said_to_be_missing():
+    out = _install(None, None)
+    if out is None:
+        return
+    assert "msix.json: missing" in out[2], out[2]
+    print("  a missing config is reported as missing")
+
+
+def test_an_existing_config_is_backed_up_even_when_empty():
+    """An empty or whitespace file is still the driver's file, and the one
+    the installer overwrites; it gets its backup like any other."""
+    out = _install(None, None, raw={"owner": "  \n"})
+    if out is None:
+        return
+    assert "Backed up to msix.json" in out[2], out[2]
+    assert "msix.json: empty" in out[2], out[2]
+    print("  an empty config is reported as empty and backed up")
+
+
+def test_the_kept_line_reads_in_order():
+    old = {"mcpServers": {"telemetrist": {
+        "command": "py", "args": [], "env": {"X": "1"}}}}
+    out = _install(old, None)
+    if out is None:
+        return
+    kept = next(l for l in out[2].splitlines() if l.startswith("OK: Kept"))
+    assert kept.startswith("OK: Kept env from the 'telemetrist' entry in "), \
+        kept
+    assert not kept.rstrip().endswith("entry"), kept
+    print(f"  {kept}")
 
 
 if __name__ == "__main__":
