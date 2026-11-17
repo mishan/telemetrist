@@ -306,6 +306,27 @@ function Unregister-FromClaudeDesktop {
     }
 }
 
+# One line on what a config file held: missing, empty, or which MCP servers,
+# with the fields beyond command and args on our own entries.
+function Get-ConfigSummary ($path, $cfg) {
+    if (-not (Test-Path -LiteralPath $path)) { return 'missing' }
+    if (-not $cfg) { return 'empty or not JSON' }
+    $servers = $null
+    if ($cfg.PSObject.Properties['mcpServers']) { $servers = $cfg.mcpServers }
+    $names = @()
+    if ($servers) { $names = @($servers.PSObject.Properties.Name | Where-Object { $_ }) }
+    if ($names.Count -eq 0) { return 'no MCP servers' }
+    $parts = foreach ($n in $names) {
+        $fields = @()
+        if ($n -eq $ServerName -or $LegacyServerNames -contains $n) {
+            $fields = @($servers.$n.PSObject.Properties.Name |
+                        Where-Object { $_ -and $_ -notin @('command', 'args') })
+        }
+        if ($fields.Count -gt 0) { "$n (with $($fields -join ', '))" } else { $n }
+    }
+    return "MCP servers: $($parts -join ', ')"
+}
+
 # Write the stdio server entry into the one config Claude Desktop actually
 # reads, and make sure no other config carries it. Sets $script:OwnerConfigDir
 # so the caller can point at the right log folder afterwards.
@@ -375,6 +396,10 @@ function Register-WithClaudeDesktop {
         }
     }
 
+    # What the owner held as read, before the empty object below stands in
+    # for a missing or empty file.
+    $ownerSummary = Get-ConfigSummary $OwnerConfigPath $config
+
     if (-not $config) { $config = [pscustomobject]@{} }
 
     if (-not $config.PSObject.Properties['mcpServers']) {
@@ -403,6 +428,15 @@ function Register-WithClaudeDesktop {
             } catch { }
             @{Path=$_.Path; Config=$c}
         })
+    # Say what each config held before anything is written. A setting that
+    # was already gone when the installer ran -- removed by the client's
+    # own update, say -- otherwise leaves no trace of where it had been.
+    foreach ($s in $searched) {
+        $summary = if ($s.Path -eq $OwnerConfigPath) { $ownerSummary }
+                   else { Get-ConfigSummary $s.Path $s.Config }
+        Write-Info "Found in $($s.Path): $summary"
+    }
+
     :search foreach ($name in @($ServerName) + $LegacyServerNames) {
         foreach ($s in $searched) {
             $servers = $null
@@ -418,7 +452,7 @@ function Register-WithClaudeDesktop {
                 if ($p.Name -in @('command', 'args')) { continue }
                 $entry | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value -Force
             }
-            $keptFrom = "'$name' in $($s.Path)"
+            $keptFrom = "the '$name' entry in $($s.Path)"
             break search
         }
     }
@@ -452,7 +486,10 @@ function Register-WithClaudeDesktop {
         $written += $OwnerConfigPath
     } else {
         try {
-            if ($rawOld -and $rawOld.Trim() -and -not $alreadyBackedUp) {
+            # Any existing file, empty or not: it is the one being replaced,
+            # and a file that reads as empty may be the only evidence of
+            # what happened to it.
+            if ((Test-Path -LiteralPath $OwnerConfigPath) -and -not $alreadyBackedUp) {
                 $bak = Backup-ConfigFile $OwnerConfigPath
                 Write-Info "Backed up to $(Split-Path -Leaf $bak)"
             }
@@ -472,7 +509,7 @@ function Register-WithClaudeDesktop {
         $kept = @($entry.PSObject.Properties.Name |
                   Where-Object { $_ -notin @('command', 'args') })
         if ($keptFrom -and $kept.Count -gt 0) {
-            Write-Ok "Kept $($kept -join ', ') from the $keptFrom entry"
+            Write-Ok "Kept $($kept -join ', ') from $keptFrom"
         }
         # Where-Object { $_ }: an empty PSObject property collection yields a
         # single $null, which passes a bare -ne test and reported "1 other
